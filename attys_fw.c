@@ -404,9 +404,9 @@ void initADC()
 // mag defines if it's the accelerometer/gyro (0) or magnetometer (1)
 // READ: bitOR the register address with LSM9DS1_REGISTER_READ and just transmit 0
 // WRITE: specify register and value. That's it.
-unsigned char lsm_txrx(const unsigned char addr, 
-		       const unsigned char c,
-		       const unsigned char mag)
+unsigned char lsmWriteByte(const unsigned char addr, 
+			   const unsigned char c,
+			   const unsigned char mag)
 {
 	unsigned char rx;
 
@@ -441,6 +441,57 @@ unsigned char lsm_txrx(const unsigned char addr,
 }
 
 
+void initAccel(unsigned char r) {
+	uint8_t tempRegValue = 0;
+	
+	//    CTRL_REG5_XL (0x1F) (Default value: 0x38)
+	//    [DEC_1][DEC_0][Zen_XL][Yen_XL][Zen_XL][0][0][0]
+	//    DEC[0:1] - Decimation of accel data on OUT REG and FIFO.
+	//        00: None, 01: 2 samples, 10: 4 samples 11: 8 samples
+	//    Zen_XL - Z-axis output enabled
+	//    Yen_XL - Y-axis output enabled
+	//    Xen_XL - X-axis output enabled
+	tempRegValue |= (1<<5);
+	tempRegValue |= (1<<4);
+	tempRegValue |= (1<<3);
+	
+	lsmWriteByte(CTRL_REG5_XL, tempRegValue, 0);
+
+	// sets sampling rate: 476Hz
+	tempRegValue = (5 << 5);
+    
+	switch (r) {
+	case 1:
+		tempRegValue |= (0x2 << 3);
+		break;
+	case 2:
+		tempRegValue |= (0x3 << 3);
+		break;
+	case 3:
+		tempRegValue |= (0x1 << 3);
+		break;
+	}
+	
+	lsmWriteByte(CTRL_REG6_XL, tempRegValue, 0);
+	
+	// CTRL_REG6_XL (0x20) (Default value: 0x00)
+	// [ODR_XL2][ODR_XL1][ODR_XL0][FS1_XL][FS0_XL][BW_SCAL_ODR][BW_XL1][BW_XL0]
+	// ODR_XL[2:0] - Output data rate & power mode selection
+	// FS_XL[1:0] - Full-scale selection
+	// BW_SCAL_ODR - Bandwidth selection
+	// BW_XL[1:0] - Anti-aliasing filter bandwidth selection
+	
+	// CTRL_REG7_XL (0x21) (Default value: 0x00)
+	// [HR][DCF1][DCF0][0][0][FDS][0][HPIS1]
+	// HR - High resolution mode (0: disable, 1: enable)
+	// DCF[1:0] - Digital filter cutoff frequency
+	// FDS - Filtered data selection
+	// HPIS1 - HPF enabled for interrupt function
+	tempRegValue |= (1<<7); // Set HR bit
+	// ODR/9
+	tempRegValue |= (2 << 5);
+	lsmWriteByte(CTRL_REG7_XL, tempRegValue,0);
+}
 
 
 
