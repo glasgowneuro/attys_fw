@@ -1,6 +1,6 @@
 /**
    Attys firmware
-   Copyright (C) 2016, Bernd Porr, mail@berndporr.me.uk
+   Copyright (C) 2016-2020, Bernd Porr, mail@berndporr.me.uk
    
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -24,7 +24,7 @@
 
 #include <msp430.h>
 #include <stdio.h>
-#include "mpu9250.h"
+#include "LSM9DS1_Registers.h"
 #include "base64.h"
 
 // clock speeds for the ADC
@@ -103,10 +103,6 @@ unsigned char verbose = 1;
 unsigned char adc_stat;
 unsigned char acc_stat;
 unsigned char mag_stat;
-
-// the whoami registers of the acc/mag
-uint8_t mpu9250_AK8963_whoami = 0;
-uint8_t mpu9250_whoami = 0;
 
 // the buffer which receives the commands
 #define CONFIG_BUFFER_SIZE 8
@@ -399,20 +395,23 @@ void initADC()
 }
 
 
-//////////////
-/// MPU9250
+
+// LSM
 
 
+// lsm9DS1 read/write operation via SPI
 // reads / writes from a register
-// xmtype defines if it's the acc or the magnetometer
-unsigned char mpu9250_txrx(unsigned char readreg,
-                        unsigned char addr, 
-			unsigned char c)
+// mag defines if it's the accelerometer/gyro (0) or magnetometer (1)
+// READ: bitOR the register address with LSM9DS1_REGISTER_READ and just transmit 0
+// WRITE: specify register and value. That's it.
+unsigned char lsm_txrx(const unsigned char addr, 
+		       const unsigned char c,
+		       const unsigned char mag)
 {
 	unsigned char rx;
 
-	// 1MHz SPI clock
-	UCB0BR0 = 16;
+	// 8MHz SPI clock
+	UCB0BR0 = 2;
 	// inactive state of the SPI is high
 	UCB0CTL0 |= UCCKPL;
 	// Phase=0, data is changed on the first edge
@@ -420,21 +419,20 @@ unsigned char mpu9250_txrx(unsigned char readreg,
 	// **Initialize USCI state machine**
 	UCB0CTL1 &= ~UCSWRST;
 
-	// CS
-	P2OUT &= ~BIT4;
-
-	if (readreg) {
-		addr |= 0x80;
-		c = 0;
-	} else {
-		addr &= 0x7f;
-	}
+	// CS low
+	if (mag)
+		P2OUT &= ~BIT4;
+	else
+		P2OUT &= ~BIT5;
 
 	rx=spi_txrx(addr);
 	rx=spi_txrx(c);
 
-	// CS
-	P2OUT |= BIT4;
+	// CS high again
+	if (mag)
+		P2OUT |= BIT4;
+	else
+		P2OUT |= BIT5;
 
 	// bring USCI back into reset
 	UCB0CTL1 |= UCSWRST;
@@ -443,187 +441,9 @@ unsigned char mpu9250_txrx(unsigned char readreg,
 }
 
 
-// reads from multiple registers
-void mpu9250_rx_multi(unsigned char addr, 
-		      unsigned char n,
-		      unsigned char *rx)
-{
-	int i;
-
-	// 1MHz SPI clock
-	UCB0BR0 = 16;
-	// inactive state of the SPI is high
-	UCB0CTL0 |= UCCKPL;
-	// Phase=0, data is changed on the first edge
-	UCB0CTL0 &= ~UCCKPH;
-	// **Initialize USCI state machine**
-	UCB0CTL1 &= ~UCSWRST;
-
-	// CS
-	P2OUT &= ~BIT4;
-
-	addr |= 0x80;
-	spi_txrx(addr);
-
-	for(i=0; i<n; i++) {
-		*rx=spi_txrx(0);
-		rx++;
-	}
-
-	// CS
-	P2OUT |= BIT4;
-
-	// bring USCI back into reset
-	UCB0CTL1 |= UCSWRST;
-}
-
-
-uint8_t mpu9250_readRegister(const uint8_t register_addr) {
-	return mpu9250_txrx(1,register_addr,0);
-}
-
-
-uint8_t mpu9250_writeRegister(const uint8_t register_addr,
-			      const uint8_t value) {
-	return mpu9250_txrx(0,register_addr,value);
-}
-
-
-int16_t mpu9250_readRegisters(const uint8_t msb_register, 
-			      const uint8_t lsb_register) {
-    uint8_t msb = mpu9250_readRegister(msb_register);
-    uint8_t lsb = mpu9250_readRegister(lsb_register);
-    return (((int16_t)msb) << 8) | lsb;
-}
-
-
-int mpu9250_checkwhoIam() {
-	int i = 0;
-	mpu9250_whoami = 0;
-	for(i=0;i<32000;i++) {
-		mpu9250_whoami = mpu9250_readRegister(MPU9250_WHO_AM_I);
-		if ( mpu9250_whoami == WHOAMI_DEFAULT_VAL ) return 1;
-		if ( mpu9250_whoami == WHOAMI_RESET_VAL ) return 1;
-	}
-	return 0;
-}	
-
-
-// should return 48h
-uint8_t mpu9250_AK8963_read_reg(uint8_t reg) {
-	uint8_t response;
-	
-	// talk to slave at address AK8963_I2C_ADDR, READ OP
-	mpu9250_writeRegister(MPUREG_I2C_SLV0_ADDR,AK8963_I2C_ADDR|0x80);
-	// read from register AK8963_WIA
-	mpu9250_writeRegister(MPUREG_I2C_SLV0_REG, reg);
-	// read one byte from slave 0
-	mpu9250_writeRegister(MPUREG_I2C_SLV0_CTRL, 0x81);
-	delay(10);
-	response=mpu9250_readRegister(MPUREG_EXT_SENS_DATA_00);
-	return response;
-}
-
-
-int mpu9250_AK8963_checkwhoIam() {
-	int i;
-	mpu9250_AK8963_whoami = 0;
-	for(i=0;i<32000;i++) {
-		mpu9250_AK8963_whoami = mpu9250_AK8963_read_reg(AK8963_WIA);
-		if ( mpu9250_AK8963_whoami == 0x48 ) return 1;
-	}
-	return 0;
-}	
-
-
-void mpu9250_setFullScaleAccelRange(const uint8_t range) {
-	// normal operation
-        mpu9250_writeRegister(MPU9250_ACCEL_CONFIG, range);
-}
 
 
 
-void initmpu9250() {
-	// master reset
-	mpu9250_writeRegister(MPU9250_PWR_MGMT_1,0x80);
-	delay(0xffff);
-	delay(0xffff);
-	// wake it up with internal oscillator
-	mpu9250_writeRegister(MPU9250_PWR_MGMT_1,0x00);
-	delay(0xffff);
-	delay(0xffff);
-	// switch clock source to PLL
-	mpu9250_writeRegister(MPU9250_PWR_MGMT_1,0x01);
-	delay(0xffff);
-	delay(0xffff);
-	// check that we are alive and know who we are
-	acc_stat = mpu9250_checkwhoIam();
-	delay(0xffff);
-
-	// switch on all sensors
-	mpu9250_writeRegister(MPU9250_PWR_MGMT_2,0x07);
-	delay(0xffff);
-
-	// sampling rate 1kHz, 90Hz bandwidth
-	mpu9250_writeRegister(MPU9250_CONFIG,0x02);
-	delay(0xffff);
-
-	// /8 = 125Hz
-	mpu9250_writeRegister(MPU9250_SMPLRT_DIV,7);
-	delay(0xffff);
-
-	// set the range of the accelerometer
-	mpu9250_setFullScaleAccelRange(MPU9250_FULL_SCALE_16G);
-	delay(0xffff);
-
-	// Enable the I2C Master I/F module
-	mpu9250_writeRegister(MPU9250_USER_CTRL,0x20);
-	delay(0xffff);
-	// 400kHz clock for I2C
-        mpu9250_writeRegister(MPUREG_I2C_MST_CTRL,0x0D);
-	delay(0xffff);
-
-	// magnetometer reset
-	mpu9250_writeRegister(MPUREG_I2C_SLV0_ADDR,AK8963_I2C_ADDR);
-	mpu9250_writeRegister(MPUREG_I2C_SLV0_REG,AK8963_CNTL2);
-	mpu9250_writeRegister(MPUREG_I2C_SLV0_DO,0x01);
-	mpu9250_writeRegister(MPUREG_I2C_SLV0_CTRL,0x81);
-	delay(0xffff);
-
-	// check if it's back to normal operation and knows...
-	mag_stat = mpu9250_AK8963_checkwhoIam();
-	delay(0xffff);
-
-	// set the magnetometer to contious mode 1
-	mpu9250_writeRegister(MPUREG_I2C_SLV0_ADDR,AK8963_I2C_ADDR);
-	mpu9250_writeRegister(MPUREG_I2C_SLV0_REG,AK8963_CNTL1);
-	mpu9250_writeRegister(MPUREG_I2C_SLV0_DO,0x12);
-	mpu9250_writeRegister(MPUREG_I2C_SLV0_CTRL,0x81);
-	delay(0xffff);
-
-	// initiate a block read from the magnetometer to the MPU
-	mpu9250_writeRegister(MPUREG_I2C_SLV0_ADDR,AK8963_I2C_ADDR|0x80);
-	// read the high byte of the X direction
-	mpu9250_writeRegister(MPUREG_I2C_SLV0_REG, AK8963_HXL);
-	// read 7 bytes (x,y,z,status)
-	mpu9250_writeRegister(MPUREG_I2C_SLV0_CTRL, 0x87);
-	delay(0xffff);
-}
-
-
-void mpu9250_read_data() {
-	uint8_t rx[22];
-
-	mpu9250_rx_multi( MPU9250_ACCEL_XOUT_H, 20, rx );
-
-	alldata.accel_x = (((uint16_t)(rx[0])<<8) | (uint16_t)(rx[1])) ^ 0x8000;
-	alldata.accel_y = (((uint16_t)(rx[2])<<8) | (uint16_t)(rx[3])) ^ 0x8000;
-	alldata.accel_z = (((uint16_t)(rx[4])<<8) | (uint16_t)(rx[5])) ^ 0x8000;
-
-	alldata.mag_x = (((uint16_t)(rx[14])) | (uint16_t)(rx[15])<<8) ^ 0x8000;
-	alldata.mag_y = (((uint16_t)(rx[16])) | (uint16_t)(rx[17])<<8) ^ 0x8000;
-	alldata.mag_z = (((uint16_t)(rx[18])) | (uint16_t)(rx[19])<<8) ^ 0x8000;
-}
 
 
 void sendInfo() {
@@ -675,7 +495,7 @@ void sendInfo() {
 
 	sendText("MPU9250:\r\n");
 	for(r=0;r<0x7f;r++) {
-		sprintf(tmp,"%02x,",mpu9250_readRegister(r));
+	  //		sprintf(tmp,"%02x,",mpu9250_readRegister(r)); fixme
 		sendText(tmp);
 		if ((r & 0x0f) == 0x0f) sendText("\r\n");
 	}
@@ -791,7 +611,7 @@ void USCI0RX_ISR(void)
 			case 't':
 			case 'T':
 				v = atoi(config_buffer+2) & 0x03;
-				mpu9250_setFullScaleAccelRange(v << 3);
+				// mpu9250_setFullScaleAccelRange(v << 3); fixme
 				trigOK();
 				flashPowerLED();
 				break;
@@ -975,7 +795,7 @@ void port2ISR(void)
 	// get the data from the ADC converter
 	adc_read_data();
 
-	mpu9250_read_data();
+	//	mpu9250_read_data(); fixme
 
 	if (send_data) {
 		if (!hasData) {
@@ -1139,7 +959,7 @@ void main(void)
 
 	initADC();
 
-	initmpu9250();
+	//	initmpu9250(); fixme
 
 	enableInterrupts();
 
