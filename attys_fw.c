@@ -17,7 +17,7 @@
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 **/
 
-#define FW_VERSION "0.99"
+#define FW_VERSION "0.990"
 
 // for debugging
 // #define FAKE_ADC_DATA
@@ -83,6 +83,9 @@ volatile static uint8_t watchdog = WATCHDOGINIT;
 
 char sendBuffer[80];
 volatile static uint8_t hasData = 0;
+
+volatile static uint8_t whoAmIAccelerometer = 0;
+volatile static uint8_t whoAmIMagnetometer = 0;
 
 // this is a counter which turns the green LED off
 uint16_t powergoodoff = 10;
@@ -404,7 +407,7 @@ void initADC()
 // mag defines if it's the accelerometer/gyro (0) or magnetometer (1)
 // READ: bitOR the register address with LSM9DS1_REGISTER_READ and just transmit 0
 // WRITE: specify register and value. That's it.
-unsigned char lsmWriteByte(const unsigned char addr, 
+unsigned char lsmWriteRegister(const unsigned char addr, 
 			   const unsigned char c,
 			   const unsigned char mag)
 {
@@ -441,7 +444,62 @@ unsigned char lsmWriteByte(const unsigned char addr,
 }
 
 
-void initAccel(unsigned char r) {
+unsigned char lsmReadRegister(const unsigned char addr,
+			      const unsigned char mag) {
+	return lsmWriteRegister(addr | 0x80, 
+				0,
+				mag);
+}
+
+
+// reads from multiple registers
+void lsmReadBytes(unsigned char addr,
+		  unsigned char *rx,
+		  unsigned char n,
+		  const unsigned char mag)
+{
+	unsigned char i;
+
+	// 8MHz SPI clock
+	UCB0BR0 = 2;
+	// inactive state of the SPI is high
+	UCB0CTL0 |= UCCKPL;
+	// Phase=0, data is changed on the first edge
+	UCB0CTL0 &= ~UCCKPH;
+	// **Initialize USCI state machine**
+	UCB0CTL1 &= ~UCSWRST;
+
+	// CS low
+	if (mag)
+		P2OUT &= ~BIT4;
+	else
+		P2OUT &= ~BIT5;
+
+	addr |= 0x80;
+	if (mag) {
+		addr |= 0x40;
+	}
+	spi_txrx(addr);
+
+	for(i=0; i<n; i++) {
+		*rx=spi_txrx(0);
+		rx++;
+	}
+
+	if (mag)
+		P2OUT |= BIT4;
+	else
+		P2OUT |= BIT5;
+
+	// bring USCI back into reset
+	UCB0CTL1 |= UCSWRST;
+}
+
+
+
+void initAccel(unsigned char fullrange) {
+	whoAmIAccelerometer = lsmReadRegister(WHO_AM_I_XG,1);
+	
 	uint8_t tempRegValue = 0;
 	
 	//    CTRL_REG5_XL (0x1F) (Default value: 0x38)
@@ -455,12 +513,12 @@ void initAccel(unsigned char r) {
 	tempRegValue |= (1<<4);
 	tempRegValue |= (1<<3);
 	
-	lsmWriteByte(CTRL_REG5_XL, tempRegValue, 0);
+	lsmWriteRegister(CTRL_REG5_XL, tempRegValue, 0);
 
 	// sets sampling rate: 476Hz
 	tempRegValue = (5 << 5);
     
-	switch (r) {
+	switch (fullrange) {
 	case 1:
 		tempRegValue |= (0x2 << 3);
 		break;
@@ -472,7 +530,7 @@ void initAccel(unsigned char r) {
 		break;
 	}
 	
-	lsmWriteByte(CTRL_REG6_XL, tempRegValue, 0);
+	lsmWriteRegister(CTRL_REG6_XL, tempRegValue, 0);
 	
 	// CTRL_REG6_XL (0x20) (Default value: 0x00)
 	// [ODR_XL2][ODR_XL1][ODR_XL0][FS1_XL][FS0_XL][BW_SCAL_ODR][BW_XL1][BW_XL0]
@@ -490,12 +548,137 @@ void initAccel(unsigned char r) {
 	tempRegValue |= (1<<7); // Set HR bit
 	// ODR/9
 	tempRegValue |= (2 << 5);
-	lsmWriteByte(CTRL_REG7_XL, tempRegValue,0);
+	lsmWriteRegister(CTRL_REG7_XL, tempRegValue,0);
 }
 
 
+void initGyro(unsigned char gyroOn) {
+	// CTRL_REG1_G (Default value: 0x00)
+	// [ODR_G2][ODR_G1][ODR_G0][FS_G1][FS_G0][0][BW_G1][BW_G0]
+	// ODR_G[2:0] - Output data rate selection
+	// FS_G[1:0] - Gyroscope full-scale selection
+	// BW_G[1:0] - Gyroscope bandwidth selection
+	
+	// To disable gyro, set sample rate bits to 0. We'll only set sample
+	// rate if the gyro is enabled.
+	
+	uint8_t tempRegValue = 0;
+	
+	if (gyroOn) {
+		// seting sampling rate to 476Hz
+		tempRegValue = (5 << 5);
+	}
+	
+        // gyro at 2000dps
+	tempRegValue |= (0x3 << 3);
+	
+	lsmWriteRegister(CTRL_REG1_G, tempRegValue, 0);
+
+	// CTRL_REG2_G (Default value: 0x00)
+	// [0][0][0][0][INT_SEL1][INT_SEL0][OUT_SEL1][OUT_SEL0]
+	// INT_SEL[1:0] - INT selection configuration
+	// OUT_SEL[1:0] - Out selection configuration
+	lsmWriteRegister(CTRL_REG2_G, 0x00, 0);
+
+	// CTRL_REG3_G (Default value: 0x00)
+	// [LP_mode][HP_EN][0][0][HPCF3_G][HPCF2_G][HPCF1_G][HPCF0_G]
+	// LP_mode - Low-power mode enable (0: disabled, 1: enabled)
+	// HP_EN - HPF enable (0:disabled, 1: enabled)
+	// HPCF_G[3:0] - HPF cutoff frequency
+	tempRegValue = 0;
+	lsmWriteRegister(CTRL_REG3_G, tempRegValue, 0);
+
+	// CTRL_REG4 (Default value: 0x38)
+	// [0][0][Zen_G][Yen_G][Xen_G][0][LIR_XL1][4D_XL1]
+	// Zen_G - Z-axis output enable (0:disable, 1:enable)
+	// Yen_G - Y-axis output enable (0:disable, 1:enable)
+	// Xen_G - X-axis output enable (0:disable, 1:enable)
+	// LIR_XL1 - Latched interrupt (0:not latched, 1:latched)
+	// 4D_XL1 - 4D option on interrupt (0:6D used, 1:4D used)
+	tempRegValue = 0;
+	tempRegValue |= (1<<5);
+	tempRegValue |= (1<<4);
+	tempRegValue |= (1<<3);
+	tempRegValue |= (1<<1);
+	lsmWriteRegister(CTRL_REG4, tempRegValue, 0);
+
+	// ORIENT_CFG_G (Default value: 0x00)
+	// [0][0][SignX_G][SignY_G][SignZ_G][Orient_2][Orient_1][Orient_0]
+	// SignX_G - Pitch axis (X) angular rate sign (0: positive, 1: negative)
+	// Orient [2:0] - Directional user orientation selection
+	tempRegValue = 0;
+	lsmWriteRegister(ORIENT_CFG_G, tempRegValue, 0);
+}
 
 
+void initMag()
+{
+	whoAmIMagnetometer = lsmReadRegister(WHO_AM_I_M,1);
+	// CTRL_REG1_M (Default value: 0x10)
+	// [TEMP_COMP][OM1][OM0][DO2][DO1][DO0][0][ST]
+	// TEMP_COMP - Temperature compensation
+	// OM[1:0] - X & Y axes op mode selection
+	//    00:low-power, 01:medium performance
+	//    10: high performance, 11:ultra-high performance
+	// DO[2:0] - Output data rate selection
+	// ST - Self-test enable
+	uint8_t tempRegValue = 0;
+	tempRegValue |= (0x3 << 5);
+	tempRegValue |= (0x7 << 2);
+	lsmWriteRegister(CTRL_REG1_M, tempRegValue, 1);
+    
+	// CTRL_REG2_M (Default value 0x00)
+	// [0][FS1][FS0][0][REBOOT][SOFT_RST][0][0]
+	// FS[1:0] - Full-scale configuration
+	// REBOOT - Reboot memory content (0:normal, 1:reboot)
+	// SOFT_RST - Reset config and user registers (0:default, 1:reset)
+	// 16 gauss or 1600E-6 Tesla
+	tempRegValue = (0x3 << 5);
+	lsmWriteRegister(CTRL_REG2_M, tempRegValue, 1);
+	
+	// CTRL_REG3_M (Default value: 0x03)
+	// [I2C_DISABLE][0][LP][0][0][SIM][MD1][MD0]
+	// I2C_DISABLE - Disable I2C interace (0:enable, 1:disable)
+	// LP - Low-power mode cofiguration (1:enable)
+	// SIM - SPI mode selection (0:write-only, 1:read/write enable)
+	// MD[1:0] - Operating mode
+	//    00:continuous conversion, 01:single-conversion,
+	//  10,11: Power-down
+	tempRegValue = 0;
+	lsmWriteRegister(CTRL_REG3_M, tempRegValue, 1); // Continuous conversion mode
+
+	// CTRL_REG4_M (Default value: 0x00)
+	// [0][0][0][0][OMZ1][OMZ0][BLE][0]
+	// OMZ[1:0] - Z-axis operative mode selection
+	//    00:low-power mode, 01:medium performance
+	//    10:high performance, 10:ultra-high performance
+	// BLE - Big/little endian data
+	tempRegValue = (3 << 2);
+	lsmWriteRegister(CTRL_REG4_M, tempRegValue, 1);
+
+	// CTRL_REG5_M (Default value: 0x00)
+	// [0][BDU][0][0][0][0][0][0]
+	// BDU - Block data update for magnetic data
+	//    0:continuous, 1:not updated until MSB/LSB are read
+	tempRegValue = 0;
+	lsmWriteRegister(CTRL_REG5_M, tempRegValue, 1);
+}
+
+void readAccel() {
+	uint8_t temp[6] = {0,0,0,0,0,0}; // We'll read six bytes from the accelerometer into temp
+	lsmReadBytes(OUT_X_L_XL, temp, 6, 0); // Read 6 bytes, beginning at OUT_X_L_XL
+	alldata.accel_x = (temp[1] << 8) | temp[0];
+	alldata.accel_y = (temp[3] << 8) | temp[2];
+	alldata.accel_z = (temp[5] << 8) | temp[4];
+}
+
+void readMag() {
+	uint8_t temp[12] = {0,0,0,0,0,0}; // We'll read six bytes from the mag into temp
+	lsmReadBytes(OUT_X_L_M, temp, 6, 1); // Read 6 bytes, beginning at OUT_X_L_M
+	alldata.mag_x = (temp[1] << 8) | temp[0];
+	alldata.mag_y = (temp[3] << 8) | temp[2];
+	alldata.mag_z = (temp[5] << 8) | temp[4];
+}
 
 void sendInfo() {
 	uint8_t r;
@@ -544,9 +727,9 @@ void sendInfo() {
 		sendText("fault\r\n");
 	}
 
-	sendText("MPU9250:\r\n");
+	sendText("LSMDS1:\r\n");
 	for(r=0;r<0x7f;r++) {
-	  //		sprintf(tmp,"%02x,",mpu9250_readRegister(r)); fixme
+		sprintf(tmp,"%02x,",lsmReadRegister(r,0));
 		sendText(tmp);
 		if ((r & 0x0f) == 0x0f) sendText("\r\n");
 	}
@@ -846,7 +1029,8 @@ void port2ISR(void)
 	// get the data from the ADC converter
 	adc_read_data();
 
-	//	mpu9250_read_data(); fixme
+	readAccel();
+	readMag();
 
 	if (send_data) {
 		if (!hasData) {
@@ -1010,7 +1194,8 @@ void main(void)
 
 	initADC();
 
-	//	initmpu9250(); fixme
+	initAccel(3);
+	initMag();
 
 	enableInterrupts();
 
