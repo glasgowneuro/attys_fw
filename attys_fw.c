@@ -675,9 +675,9 @@ void readAccel() {
 void readMag() {
 	uint8_t temp[6] = {0,0,0,0,0,0};
 	lsmReadBytes(OUT_X_L_M, temp, 6, 1);
-	alldata.mag_x = (((uint16_t)(temp[1]) << 8) | (uint16_t)(temp[0])) ^ 0x8000;
-	alldata.mag_y = (((uint16_t)(temp[3]) << 8) | (uint16_t)(temp[2])) ^ 0x8000;
-	alldata.mag_z = (((uint16_t)(temp[5]) << 8) | (uint16_t)(temp[4])) ^ 0x8000;
+	alldata.mag_x = ((((uint16_t)(temp[1]) << 8) | (uint16_t)(temp[0])) ^ 0x8000)/3;
+	alldata.mag_y = ((((uint16_t)(temp[3]) << 8) | (uint16_t)(temp[2])) ^ 0x8000)/3;
+	alldata.mag_z = ((((uint16_t)(temp[5]) << 8) | (uint16_t)(temp[4])) ^ 0x8000)/3;
 }
 
 void sendInfo() {
@@ -845,7 +845,7 @@ void USCI0RX_ISR(void)
 			case 't':
 			case 'T':
 				v = atoi(config_buffer+2) & 0x03;
-				// mpu9250_setFullScaleAccelRange(v << 3); fixme
+				initAccel(v);
 				trigOK();
 				flashPowerLED();
 				break;
