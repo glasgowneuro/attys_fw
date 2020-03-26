@@ -333,7 +333,11 @@ void adc_read_data()
 	adc_stat = spi_txrx(0x00);
 	// 2nd byte the internal GPIO connector
 	// and we add the power status
-	alldata.adc_gpio = (spi_txrx(0x00) | ( (P2IN & 0x40) << 1 ));
+	uint8_t gpio = spi_txrx(0x00);
+	// we need to swap the bits
+	alldata.adc_gpio = ( ( (gpio & 32) << 1) |
+			     ( (gpio & 64) >> 1) |
+			     ( (P2IN & 0x40) << 1) );
 	// padding with zeros
 	spi_txrx(0x00);
 
@@ -515,18 +519,25 @@ void initAccel(unsigned char fullrange) {
 
 	// sets sampling rate: 476Hz
 	tempRegValue = (5 << 5);
-    
+
+	// default is 2G
 	switch (fullrange) {
 	case 1:
+		// 4G
 		tempRegValue |= (0x2 << 3);
 		break;
 	case 2:
+		// 8G
 		tempRegValue |= (0x3 << 3);
 		break;
 	case 3:
+		// 16G
 		tempRegValue |= (0x1 << 3);
 		break;
 	}
+
+	// bandwidth is 211Hz
+	tempRegValue |= 0x1;
 	
 	lsmWriteRegister(CTRL_REG6_XL, tempRegValue, 0);
 	
@@ -543,10 +554,7 @@ void initAccel(unsigned char fullrange) {
 	// DCF[1:0] - Digital filter cutoff frequency
 	// FDS - Filtered data selection
 	// HPIS1 - HPF enabled for interrupt function
-	tempRegValue =
-		(1<<7) |  // Set HR bit
-		(2 << 5); // ODR/9
-	lsmWriteRegister(CTRL_REG7_XL, tempRegValue,0);
+	lsmWriteRegister(CTRL_REG7_XL, 0, 0);
 }
 
 
@@ -562,7 +570,7 @@ void initGyro(unsigned char gyroOn) {
 	
 	if (gyroOn) {
 		tempRegValue =
-			(5 << 5) |  // seting sampling rate to 476Hz
+			(5 << 5) |  // setting sampling rate to 476Hz
 			(0x3 << 3); // gyro at 2000dps
 		lsmWriteRegister(CTRL_REG1_G, tempRegValue, 0);
 	} else {
@@ -591,19 +599,18 @@ void initGyro(unsigned char gyroOn) {
 	// Xen_G - X-axis output enable (0:disable, 1:enable)
 	// LIR_XL1 - Latched interrupt (0:not latched, 1:latched)
 	// 4D_XL1 - 4D option on interrupt (0:6D used, 1:4D used)
-	tempRegValue = 0;
-	tempRegValue |= (1<<5);
-	tempRegValue |= (1<<4);
-	tempRegValue |= (1<<3);
-	tempRegValue |= (1<<1);
+	tempRegValue =
+		(1<<5) |
+		(1<<4) |
+		(1<<3) |
+		(1<<1);
 	lsmWriteRegister(CTRL_REG4, tempRegValue, 0);
 
 	// ORIENT_CFG_G (Default value: 0x00)
 	// [0][0][SignX_G][SignY_G][SignZ_G][Orient_2][Orient_1][Orient_0]
 	// SignX_G - Pitch axis (X) angular rate sign (0: positive, 1: negative)
 	// Orient [2:0] - Directional user orientation selection
-	tempRegValue = 0;
-	lsmWriteRegister(ORIENT_CFG_G, tempRegValue, 0);
+	lsmWriteRegister(ORIENT_CFG_G, 0, 0);
 }
 
 
@@ -675,9 +682,19 @@ void readAccel() {
 void readMag() {
 	uint8_t temp[6] = {0,0,0,0,0,0};
 	lsmReadBytes(OUT_X_L_M, temp, 6, 1);
-	alldata.mag_x = ((((uint16_t)(temp[1]) << 8) | (uint16_t)(temp[0])) ^ 0x8000)/3;
-	alldata.mag_y = ((((uint16_t)(temp[3]) << 8) | (uint16_t)(temp[2])) ^ 0x8000)/3;
-	alldata.mag_z = ((((uint16_t)(temp[5]) << 8) | (uint16_t)(temp[4])) ^ 0x8000)/3;
+	const int mpu2lsm = 3;
+	alldata.mag_x = ((uint16_t)(
+				    (((int)(temp[1]) << 8) | (int)(temp[0])) / mpu2lsm
+				    )
+			 ) ^ 0x8000;
+	alldata.mag_y = ((uint16_t)(
+				    (((int)(temp[3]) << 8) | (int)(temp[2])) / mpu2lsm
+				    )
+			 ) ^ 0x8000;
+	alldata.mag_z = ((uint16_t)(
+				    (((int)(temp[5]) << 8) | (int)(temp[4])) / mpu2lsm
+				    )
+			 ) ^ 0x8000;
 }
 
 void sendInfo() {
@@ -727,9 +744,16 @@ void sendInfo() {
 		sendText("fault\r\n");
 	}
 
-	sendText("LSMDS1:\r\n");
-	for(r=0;r<0x7f;r++) {
+	sendText("LSM9DS1 accelerometer/gyroscope:\r\n");
+	for(r=0;r<0x37;r++) {
 		sprintf(tmp,"%02x,",lsmReadRegister(r,0));
+		sendText(tmp);
+		if ((r & 0x0f) == 0x0f) sendText("\r\n");
+	}
+
+	sendText("LSM9DS1 magnetometer:\r\n");
+	for(r=0;r<0x37;r++) {
+		sprintf(tmp,"%02x,",lsmReadRegister(r,1));
 		sendText(tmp);
 		if ((r & 0x0f) == 0x0f) sendText("\r\n");
 	}
