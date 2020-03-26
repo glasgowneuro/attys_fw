@@ -17,3 +17,6 @@ obj-dump:
 
 clean:
 	rm -f *.elf *.hex *.o
+
+prog: attys_fw.elf
+	mspdebug rf2500 "prog attys_fw.elf"
