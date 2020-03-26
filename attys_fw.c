@@ -84,9 +84,6 @@ volatile static uint8_t watchdog = WATCHDOGINIT;
 char sendBuffer[80];
 volatile static uint8_t hasData = 0;
 
-volatile static uint8_t whoAmIAccelerometer = 0;
-volatile static uint8_t whoAmIMagnetometer = 0;
-
 // this is a counter which turns the green LED off
 uint16_t powergoodoff = 10;
 
@@ -102,10 +99,13 @@ unsigned char send_all_data = 1;
 // if one every successful command replies with "OK"
 unsigned char verbose = 1;
 
+volatile static uint8_t whoAmIAccelerometer = 0;
+volatile static uint8_t whoAmIMagnetometer = 0;
+
 // self test status: 1=test successful, 0=error
-unsigned char adc_stat;
-unsigned char acc_stat;
-unsigned char mag_stat;
+volatile static unsigned char adc_stat;
+volatile static unsigned char acc_stat;
+volatile static unsigned char mag_stat;
 
 // the buffer which receives the commands
 #define CONFIG_BUFFER_SIZE 8
@@ -498,9 +498,10 @@ void lsmReadBytes(unsigned char addr,
 
 
 void initAccel(unsigned char fullrange) {
-	whoAmIAccelerometer = lsmReadRegister(WHO_AM_I_XG,1);
-	
-	uint8_t tempRegValue = 0;
+	whoAmIAccelerometer = lsmReadRegister(WHO_AM_I_XG, 0);
+	if (whoAmIAccelerometer == 104) {
+		acc_stat = 1;
+	}
 	
 	//    CTRL_REG5_XL (0x1F) (Default value: 0x38)
 	//    [DEC_1][DEC_0][Zen_XL][Yen_XL][Zen_XL][0][0][0]
@@ -509,10 +510,7 @@ void initAccel(unsigned char fullrange) {
 	//    Zen_XL - Z-axis output enabled
 	//    Yen_XL - Y-axis output enabled
 	//    Xen_XL - X-axis output enabled
-	tempRegValue |= (1<<5);
-	tempRegValue |= (1<<4);
-	tempRegValue |= (1<<3);
-	
+	uint8_t tempRegValue = (1<<5) | (1<<4) | (1<<3);	
 	lsmWriteRegister(CTRL_REG5_XL, tempRegValue, 0);
 
 	// sets sampling rate: 476Hz
@@ -545,35 +543,34 @@ void initAccel(unsigned char fullrange) {
 	// DCF[1:0] - Digital filter cutoff frequency
 	// FDS - Filtered data selection
 	// HPIS1 - HPF enabled for interrupt function
-	tempRegValue |= (1<<7); // Set HR bit
-	// ODR/9
-	tempRegValue |= (2 << 5);
+	tempRegValue =
+		(1<<7) |  // Set HR bit
+		(2 << 5); // ODR/9
 	lsmWriteRegister(CTRL_REG7_XL, tempRegValue,0);
 }
 
 
 void initGyro(unsigned char gyroOn) {
+
 	// CTRL_REG1_G (Default value: 0x00)
 	// [ODR_G2][ODR_G1][ODR_G0][FS_G1][FS_G0][0][BW_G1][BW_G0]
 	// ODR_G[2:0] - Output data rate selection
 	// FS_G[1:0] - Gyroscope full-scale selection
 	// BW_G[1:0] - Gyroscope bandwidth selection
 	
-	// To disable gyro, set sample rate bits to 0. We'll only set sample
-	// rate if the gyro is enabled.
-	
 	uint8_t tempRegValue = 0;
 	
 	if (gyroOn) {
-		// seting sampling rate to 476Hz
-		tempRegValue = (5 << 5);
+		tempRegValue =
+			(5 << 5) |  // seting sampling rate to 476Hz
+			(0x3 << 3); // gyro at 2000dps
+		lsmWriteRegister(CTRL_REG1_G, tempRegValue, 0);
+	} else {
+		// power down
+		lsmWriteRegister(CTRL_REG1_G, 0, 0);
+		return;
 	}
 	
-        // gyro at 2000dps
-	tempRegValue |= (0x3 << 3);
-	
-	lsmWriteRegister(CTRL_REG1_G, tempRegValue, 0);
-
 	// CTRL_REG2_G (Default value: 0x00)
 	// [0][0][0][0][INT_SEL1][INT_SEL0][OUT_SEL1][OUT_SEL0]
 	// INT_SEL[1:0] - INT selection configuration
@@ -585,8 +582,7 @@ void initGyro(unsigned char gyroOn) {
 	// LP_mode - Low-power mode enable (0: disabled, 1: enabled)
 	// HP_EN - HPF enable (0:disabled, 1: enabled)
 	// HPCF_G[3:0] - HPF cutoff frequency
-	tempRegValue = 0;
-	lsmWriteRegister(CTRL_REG3_G, tempRegValue, 0);
+	lsmWriteRegister(CTRL_REG3_G, 0x00, 0);
 
 	// CTRL_REG4 (Default value: 0x38)
 	// [0][0][Zen_G][Yen_G][Xen_G][0][LIR_XL1][4D_XL1]
@@ -614,6 +610,10 @@ void initGyro(unsigned char gyroOn) {
 void initMag()
 {
 	whoAmIMagnetometer = lsmReadRegister(WHO_AM_I_M,1);
+	if (whoAmIMagnetometer == 61) {
+		mag_stat = 1;
+	}
+	
 	// CTRL_REG1_M (Default value: 0x10)
 	// [TEMP_COMP][OM1][OM0][DO2][DO1][DO0][0][ST]
 	// TEMP_COMP - Temperature compensation
@@ -622,9 +622,9 @@ void initMag()
 	//    10: high performance, 11:ultra-high performance
 	// DO[2:0] - Output data rate selection
 	// ST - Self-test enable
-	uint8_t tempRegValue = 0;
-	tempRegValue |= (0x3 << 5);
-	tempRegValue |= (0x7 << 2);
+	uint8_t tempRegValue =
+		(0x3 << 5) |
+		(0x7 << 2);
 	lsmWriteRegister(CTRL_REG1_M, tempRegValue, 1);
     
 	// CTRL_REG2_M (Default value 0x00)
@@ -665,19 +665,19 @@ void initMag()
 }
 
 void readAccel() {
-	uint8_t temp[6] = {0,0,0,0,0,0}; // We'll read six bytes from the accelerometer into temp
-	lsmReadBytes(OUT_X_L_XL, temp, 6, 0); // Read 6 bytes, beginning at OUT_X_L_XL
-	alldata.accel_x = (temp[1] << 8) | temp[0];
-	alldata.accel_y = (temp[3] << 8) | temp[2];
-	alldata.accel_z = (temp[5] << 8) | temp[4];
+	uint8_t temp[6] = {0,0,0,0,0,0};
+	lsmReadBytes(OUT_X_L_XL, temp, 6, 0);
+	alldata.accel_x = (((uint16_t)(temp[1]) << 8) | (uint16_t)(temp[0])) ^ 0x8000;
+	alldata.accel_y = (((uint16_t)(temp[3]) << 8) | (uint16_t)(temp[2])) ^ 0x8000;
+	alldata.accel_z = (((uint16_t)(temp[5]) << 8) | (uint16_t)(temp[4])) ^ 0x8000;
 }
 
 void readMag() {
-	uint8_t temp[12] = {0,0,0,0,0,0}; // We'll read six bytes from the mag into temp
-	lsmReadBytes(OUT_X_L_M, temp, 6, 1); // Read 6 bytes, beginning at OUT_X_L_M
-	alldata.mag_x = (temp[1] << 8) | temp[0];
-	alldata.mag_y = (temp[3] << 8) | temp[2];
-	alldata.mag_z = (temp[5] << 8) | temp[4];
+	uint8_t temp[6] = {0,0,0,0,0,0};
+	lsmReadBytes(OUT_X_L_M, temp, 6, 1);
+	alldata.mag_x = (((uint16_t)(temp[1]) << 8) | (uint16_t)(temp[0])) ^ 0x8000;
+	alldata.mag_y = (((uint16_t)(temp[3]) << 8) | (uint16_t)(temp[2])) ^ 0x8000;
+	alldata.mag_z = (((uint16_t)(temp[5]) << 8) | (uint16_t)(temp[4])) ^ 0x8000;
 }
 
 void sendInfo() {
