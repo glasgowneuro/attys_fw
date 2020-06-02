@@ -106,6 +106,9 @@ unsigned char base64output = 0;
 // send all channels or just the ADC
 unsigned char send_all_data = 1;
 
+// index of data at 500Hz sampling rate
+unsigned char adc_sample_index = 0;
+
 // if one every successful command replies with "OK"
 unsigned char verbose = 1;
 
@@ -376,6 +379,64 @@ void adc_read_data()
 
 	// bring USCI back into reset
 	UCB0CTL1 |= UCSWRST;
+}
+
+
+// read both channels and GPIO at the same time with
+// one SPI read
+void adc_read_data_highspeed()
+{
+	uint32_t b2,b1,b0;
+
+	// Max possible clock
+	adc_init_spi(ADC_CLOCK_FAST);
+	
+	// CS to low
+	P1OUT &= ~BIT4;
+
+	// getting the data straight away
+	// 1st byte is the status
+	adc_stat = spi_txrx(0x00);
+	// 2nd byte the internal GPIO connector
+	// and we add the power status
+	uint8_t gpio = spi_txrx(0x00);
+	// we need to swap the bits
+	alldata.adc_data.adc_gpio = ( ( (gpio & 32) << 1) |
+				      ( (gpio & 64) >> 1) |
+				      ( (P2IN & 0x40) << 1) );
+	// padding with zeros
+	spi_txrx(0x00);
+
+	// 24bit reading from ADC channel 1
+	b2 = spi_txrx(0x00);
+	b1 = spi_txrx(0x00);
+	b0 = spi_txrx(0x00);
+	// merge bits and convert to unsigned integer
+	alldata.adc_data.adc_samples[adc_sample_index].ch1 =
+		((b2 << 16) | (b1 << 8) | b0) ^ 0x00800000;
+#ifdef FAKE_ADC_DATA
+	alldata.adc_ch1 = 0x00855555;
+#endif
+
+	// 24bit reading from ADC channel 2
+	b2 = spi_txrx(0x00);
+	b1 = spi_txrx(0x00);
+	b0 = spi_txrx(0x00);
+	// merge bits and convert to unsigned integer
+	alldata.adc_data.adc_samples[adc_sample_index].ch2 =
+		((b2 << 16) | (b1 << 8) | b0) ^ 0x00800000;
+#ifdef FAKE_ADC_DATA
+	alldata.bin_data.adc_sample.ch2 = 0x00855555;
+#endif
+
+	// CS to high
+	P1OUT |= BIT4;
+
+	// bring USCI back into reset
+	UCB0CTL1 |= UCSWRST;
+
+	// flip bit
+	adc_sample_index = adc_sample_index ^ 1;
 }
 
 
@@ -866,7 +927,13 @@ void USCI0RX_ISR(void)
 				break;
 			case 'f':
 			case 'F':
-				send_all_data = (atoi(config_buffer+2) != 0);
+				// no longer supported
+				trigOK();
+				flashPowerLED();
+				break;
+			case 'h':
+			case 'H':
+				send_all_data = (atoi(config_buffer+2) == 0);
 				trigOK();
 				flashPowerLED();
 				break;
@@ -1066,22 +1133,36 @@ void port2ISR(void)
 	// not data ready which has caused it
 	if (!(P2IFG & BIT3)) return;
 
-	// get the data from the ADC converter
-	adc_read_data();
-
-	readAccel();
-	readMag();
-
-	if (send_data) {
-		if (!hasData) {
-			hasData = 1;
-			if (base64output) {
-				sendDataAsBase64(sendBuffer);
-			} else {
-				sendDataAsText(sendBuffer);
+	if (send_all_data) {
+		// get the data from the ADC converter
+		adc_read_data();
+		
+		readAccel();
+		readMag();
+		
+		if (send_data) {
+			if (!hasData) {
+				hasData = 1;
+				if (base64output) {
+					sendDataAsBase64(sendBuffer);
+				} else {
+					sendDataAsText(sendBuffer);
+				}
+			}
+			alldata.bin_data.timestamp++;
+		}
+	} else {
+		// get the data from the ADC converter
+		adc_read_data_highspeed();
+		if (adc_sample_index == 0) {
+			if (send_data) {
+				if (!hasData) {
+					hasData = 1;
+					sendDataAsBase64(sendBuffer);
+				}
+				alldata.bin_data.timestamp++;
 			}
 		}
-		alldata.bin_data.timestamp++;
 	}
 
 	P2IFG &= ~BIT3;
