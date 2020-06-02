@@ -361,7 +361,7 @@ void adc_read_data()
 	// merge bits and convert to unsigned integer
 	alldata.bin_data.adc_sample.ch1 = ((b2 << 16) | (b1 << 8) | b0) ^ 0x00800000;
 #ifdef FAKE_ADC_DATA
-	alldata.adc_ch1 = 0x00855555;
+	alldata.bin_data.adc_sample.ch1 = 0x00855555;
 #endif
 
 	// 24bit reading from ADC channel 2
@@ -415,7 +415,7 @@ void adc_read_data_highspeed()
 	alldata.adc_data.adc_samples[adc_sample_index].ch1 =
 		((b2 << 16) | (b1 << 8) | b0) ^ 0x00800000;
 #ifdef FAKE_ADC_DATA
-	alldata.adc_ch1 = 0x00855555;
+	alldata.adc_data.adc_samples[adc_sample_index].ch1 = 0x00855555;
 #endif
 
 	// 24bit reading from ADC channel 2
@@ -426,7 +426,7 @@ void adc_read_data_highspeed()
 	alldata.adc_data.adc_samples[adc_sample_index].ch2 =
 		((b2 << 16) | (b1 << 8) | b0) ^ 0x00800000;
 #ifdef FAKE_ADC_DATA
-	alldata.bin_data.adc_sample.ch2 = 0x00855555;
+	alldata.adc_data.adc_samples[adc_sample_index].ch2 = 0x00855555;
 #endif
 
 	// CS to high
@@ -1085,7 +1085,7 @@ void initRN42() {
 	uart_tx('$');
 	uart_tx('$');
 	delay(RN42WAIT);
-	sendText("S-,GN-ATTYS1");
+	sendText("S-,GN-ATTYS2");
 	uart_tx(10);
 	delay(RN42WAIT);
 	sendText("R,1");
@@ -1136,7 +1136,7 @@ void port2ISR(void)
 	if (send_all_data) {
 		// get the data from the ADC converter
 		adc_read_data();
-		
+
 		readAccel();
 		readMag();
 		
@@ -1321,6 +1321,8 @@ void main(void)
 	enableInterrupts();
 
 	initRN42();
+
+	flashPowerLED();
 
 	send_data = 1;
 
