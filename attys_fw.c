@@ -17,7 +17,7 @@
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 **/
 
-#define FW_VERSION "0.990"
+#define FW_VERSION "2.0"
 
 // for debugging
 // #define FAKE_ADC_DATA
@@ -48,12 +48,16 @@ unsigned char ignore_rx = 0;
 // send OK
 unsigned char doSendOK = 0;
 
+struct __attribute__((__packed__)) adc_sample_t {
+        uint32_t ch1 : 24;
+	uint32_t ch2 : 24;
+};
+	
 // all the data which is transmitted
 // if it's in binary form then it's exactly in this format
 // needs to be packed so that it's as small as possible
 struct __attribute__((__packed__)) bin_data_t {
-        uint32_t adc_ch1 : 24;
-	uint32_t adc_ch2 : 24;
+	struct adc_sample_t adc_sample;
 	
 	uint8_t adc_gpio;
 	uint8_t timestamp;
@@ -66,18 +70,24 @@ struct __attribute__((__packed__)) bin_data_t {
 	uint16_t mag_y;
 	uint16_t mag_z;
 
-} alldata;
+};
 
 // for higher data rates we only transmit the ADC
 // but not the acc/mag
-struct __attribute__((__packed__)) {
-	uint32_t adc_ch1 : 24;
-	uint32_t adc_ch2 : 24;
+struct __attribute__((__packed__)) adc_data_t {
+	struct adc_sample_t adc_samples[2];
 	
 	uint8_t adc_gpio;
 	uint8_t timestamp;
-} adc_data_t;
+};
 
+union __attribute__((__packed__)) all_data_t {
+	struct adc_data_t adc_data;
+	struct bin_data_t bin_data;
+};
+
+union all_data_t alldata;
+	
 #define WATCHDOGINIT 255
 volatile static uint8_t watchdog = WATCHDOGINIT;
 
@@ -335,7 +345,7 @@ void adc_read_data()
 	// and we add the power status
 	uint8_t gpio = spi_txrx(0x00);
 	// we need to swap the bits
-	alldata.adc_gpio = ( ( (gpio & 32) << 1) |
+	alldata.bin_data.adc_gpio = ( ( (gpio & 32) << 1) |
 			     ( (gpio & 64) >> 1) |
 			     ( (P2IN & 0x40) << 1) );
 	// padding with zeros
@@ -346,7 +356,7 @@ void adc_read_data()
 	b1 = spi_txrx(0x00);
 	b0 = spi_txrx(0x00);
 	// merge bits and convert to unsigned integer
-	alldata.adc_ch1 = ((b2 << 16) | (b1 << 8) | b0) ^ 0x00800000;
+	alldata.bin_data.adc_sample.ch1 = ((b2 << 16) | (b1 << 8) | b0) ^ 0x00800000;
 #ifdef FAKE_ADC_DATA
 	alldata.adc_ch1 = 0x00855555;
 #endif
@@ -356,9 +366,9 @@ void adc_read_data()
 	b1 = spi_txrx(0x00);
 	b0 = spi_txrx(0x00);
 	// merge bits and convert to unsigned integer
-	alldata.adc_ch2 = ((b2 << 16) | (b1 << 8) | b0) ^ 0x00800000;
+	alldata.bin_data.adc_sample.ch2 = ((b2 << 16) | (b1 << 8) | b0) ^ 0x00800000;
 #ifdef FAKE_ADC_DATA
-	alldata.adc_ch2 = 0x00855555;
+	alldata.bin_data.adc_sample.ch2 = 0x00855555;
 #endif
 
 	// CS to high
@@ -674,27 +684,27 @@ void initMag()
 void readAccel() {
 	uint8_t temp[6] = {0,0,0,0,0,0};
 	lsmReadBytes(OUT_X_L_XL, temp, 6, 0);
-	alldata.accel_x = (((uint16_t)(temp[1]) << 8) | (uint16_t)(temp[0])) ^ 0x8000;
-	alldata.accel_y = (((uint16_t)(temp[3]) << 8) | (uint16_t)(temp[2])) ^ 0x8000;
-	alldata.accel_z = (((uint16_t)(temp[5]) << 8) | (uint16_t)(temp[4])) ^ 0x8000;
+	alldata.bin_data.accel_x = (((uint16_t)(temp[1]) << 8) | (uint16_t)(temp[0])) ^ 0x8000;
+	alldata.bin_data.accel_y = (((uint16_t)(temp[3]) << 8) | (uint16_t)(temp[2])) ^ 0x8000;
+	alldata.bin_data.accel_z = (((uint16_t)(temp[5]) << 8) | (uint16_t)(temp[4])) ^ 0x8000;
 }
 
 void readMag() {
 	uint8_t temp[6] = {0,0,0,0,0,0};
 	lsmReadBytes(OUT_X_L_M, temp, 6, 1);
 	const int mpu2lsm = 3;
-	alldata.mag_x = ((uint16_t)(
-				    (((int)(temp[1]) << 8) | (int)(temp[0])) / mpu2lsm
-				    )
-			 ) ^ 0x8000;
-	alldata.mag_y = ((uint16_t)(
-				    (((int)(temp[3]) << 8) | (int)(temp[2])) / mpu2lsm
-				    )
-			 ) ^ 0x8000;
-	alldata.mag_z = ((uint16_t)(
-				    (((int)(temp[5]) << 8) | (int)(temp[4])) / mpu2lsm
-				    )
-			 ) ^ 0x8000;
+	alldata.bin_data.mag_x = ((uint16_t)(
+					  (((int)(temp[1]) << 8) | (int)(temp[0])) / mpu2lsm
+					  )
+		) ^ 0x8000;
+	alldata.bin_data.mag_y = ((uint16_t)(
+					  (((int)(temp[3]) << 8) | (int)(temp[2])) / mpu2lsm
+					  )
+		) ^ 0x8000;
+	alldata.bin_data.mag_z = ((uint16_t)(
+					  (((int)(temp[5]) << 8) | (int)(temp[4])) / mpu2lsm
+					  )
+		) ^ 0x8000;
 }
 
 void sendInfo() {
@@ -1026,17 +1036,23 @@ void sendDataAsText(char* tmp) {
 	// send it to the host
 	// the '-1' makes it easier to detect a broken sample
 	sprintf(tmp,"01,%02x,%04x,%04x,%04x,%04x,%04x,%04x,%l06x,%l06x,%02x",
-		alldata.timestamp,
-		alldata.accel_x,alldata.accel_y,alldata.accel_z,
-		alldata.mag_x,alldata.mag_y,alldata.mag_z,
-		alldata.adc_ch1,alldata.adc_ch2,alldata.adc_gpio);
+		alldata.bin_data.timestamp,
+		alldata.bin_data.accel_x,
+		alldata.bin_data.accel_y,
+		alldata.bin_data.accel_z,
+		alldata.bin_data.mag_x,
+		alldata.bin_data.mag_y,
+		alldata.bin_data.mag_z,
+		alldata.bin_data.adc_sample.ch1,
+		alldata.bin_data.adc_sample.ch2,
+		alldata.bin_data.adc_gpio);
 }
 
 void sendDataAsBase64(char *coded_dst) {
 	if (send_all_data) {
-		Base64encode(coded_dst,(char*)(&alldata),sizeof(alldata));
+		Base64encode(coded_dst,(char*)(&alldata),sizeof(alldata.bin_data));
 	} else {
-		Base64encode(coded_dst,(char*)(&alldata),sizeof(adc_data_t));
+		Base64encode(coded_dst,(char*)(&alldata),sizeof(alldata.adc_data));
 	}
 }
 
@@ -1065,7 +1081,7 @@ void port2ISR(void)
 				sendDataAsText(sendBuffer);
 			}
 		}
-		alldata.timestamp++;
+		alldata.bin_data.timestamp++;
 	}
 
 	P2IFG &= ~BIT3;
