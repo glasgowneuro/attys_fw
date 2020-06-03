@@ -72,17 +72,21 @@ struct __attribute__((__packed__)) bin_data_t {
 
 };
 
-// for higher data rates we only transmit the ADC
-// but not the acc/mag
-struct __attribute__((__packed__)) adc_data_t {
+// For higher data rates we only transmit two ADC samples
+// and acc only.
+struct __attribute__((__packed__)) highspeed_data_t {
 	struct adc_sample_t adc_samples[2];
 	
 	uint8_t adc_gpio;
 	uint8_t timestamp;
+
+	uint16_t accel_x;
+	uint16_t accel_y;
+	uint16_t accel_z;
 };
 
 union __attribute__((__packed__)) all_data_t {
-	struct adc_data_t adc_data;
+	struct highspeed_data_t highspeed_data;
 	struct bin_data_t bin_data;
 };
 
@@ -401,7 +405,7 @@ void adc_read_data_highspeed()
 	// and we add the power status
 	uint8_t gpio = spi_txrx(0x00);
 	// we need to swap the bits
-	alldata.adc_data.adc_gpio = ( ( (gpio & 32) << 1) |
+	alldata.highspeed_data.adc_gpio = ( ( (gpio & 32) << 1) |
 				      ( (gpio & 64) >> 1) |
 				      ( (P2IN & 0x40) << 1) );
 	// padding with zeros
@@ -412,10 +416,10 @@ void adc_read_data_highspeed()
 	b1 = spi_txrx(0x00);
 	b0 = spi_txrx(0x00);
 	// merge bits and convert to unsigned integer
-	alldata.adc_data.adc_samples[adc_sample_index].ch1 =
+	alldata.highspeed_data.adc_samples[adc_sample_index].ch1 =
 		((b2 << 16) | (b1 << 8) | b0) ^ 0x00800000;
 #ifdef FAKE_ADC_DATA
-	alldata.adc_data.adc_samples[adc_sample_index].ch1 = 0x00855555;
+	alldata.highspeed_data.adc_samples[adc_sample_index].ch1 = 0x00855555;
 #endif
 
 	// 24bit reading from ADC channel 2
@@ -423,10 +427,10 @@ void adc_read_data_highspeed()
 	b1 = spi_txrx(0x00);
 	b0 = spi_txrx(0x00);
 	// merge bits and convert to unsigned integer
-	alldata.adc_data.adc_samples[adc_sample_index].ch2 =
+	alldata.highspeed_data.adc_samples[adc_sample_index].ch2 =
 		((b2 << 16) | (b1 << 8) | b0) ^ 0x00800000;
 #ifdef FAKE_ADC_DATA
-	alldata.adc_data.adc_samples[adc_sample_index].ch2 = 0x00855555;
+	alldata.highspeed_data.adc_samples[adc_sample_index].ch2 = 0x00855555;
 #endif
 
 	// CS to high
@@ -748,6 +752,14 @@ void readAccel() {
 	alldata.bin_data.accel_x = (((uint16_t)(temp[1]) << 8) | (uint16_t)(temp[0])) ^ 0x8000;
 	alldata.bin_data.accel_y = (((uint16_t)(temp[3]) << 8) | (uint16_t)(temp[2])) ^ 0x8000;
 	alldata.bin_data.accel_z = (((uint16_t)(temp[5]) << 8) | (uint16_t)(temp[4])) ^ 0x8000;
+}
+
+void readAccelHighSpeed() {
+	uint8_t temp[6] = {0,0,0,0,0,0};
+	lsmReadBytes(OUT_X_L_XL, temp, 6, 0);
+	alldata.highspeed_data.accel_x = (((uint16_t)(temp[1]) << 8) | (uint16_t)(temp[0])) ^ 0x8000;
+	alldata.highspeed_data.accel_y = (((uint16_t)(temp[3]) << 8) | (uint16_t)(temp[2])) ^ 0x8000;
+	alldata.highspeed_data.accel_z = (((uint16_t)(temp[5]) << 8) | (uint16_t)(temp[4])) ^ 0x8000;
 }
 
 void readMag() {
@@ -1116,11 +1128,7 @@ void sendDataAsText(char* tmp) {
 }
 
 void sendDataAsBase64(char *coded_dst) {
-	if (send_all_data) {
-		Base64encode(coded_dst,(char*)(&alldata),sizeof(alldata.bin_data));
-	} else {
-		Base64encode(coded_dst,(char*)(&alldata),sizeof(alldata.adc_data));
-	}
+	Base64encode(coded_dst,(char*)(&alldata),sizeof(alldata));
 }
 
 
@@ -1136,7 +1144,6 @@ void port2ISR(void)
 	if (send_all_data) {
 		// get the data from the ADC converter
 		adc_read_data();
-
 		readAccel();
 		readMag();
 		
@@ -1154,6 +1161,7 @@ void port2ISR(void)
 	} else {
 		// get the data from the ADC converter
 		adc_read_data_highspeed();
+		readAccelHighSpeed();
 		if (adc_sample_index == 0) {
 			if (send_data) {
 				if (!hasData) {
