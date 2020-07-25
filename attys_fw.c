@@ -449,6 +449,7 @@ void adc_read_data_highspeed()
 void setSamplingRate(unsigned char v) {
 	v = v & 0b00000011;
        	adc_write_reg(0x01,v);
+	send_all_data = (v < 2);
 }
 
 // starting the ADC by pulling the START pin high
@@ -940,12 +941,6 @@ void USCI0RX_ISR(void)
 			case 'f':
 			case 'F':
 				// no longer supported
-				trigOK();
-				flashPowerLED();
-				break;
-			case 'h':
-			case 'H':
-				send_all_data = (atoi(config_buffer+2) == 0);
 				trigOK();
 				flashPowerLED();
 				break;
