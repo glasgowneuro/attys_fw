@@ -20,3 +20,4 @@ clean:
 
 prog: attys_fw.elf
 	mspdebug rf2500 "prog attys_fw.elf"
+	echo "Run twice for programmin Attys2 ID"
