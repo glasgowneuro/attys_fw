@@ -12,6 +12,9 @@ attys_fw.elf: attys_fw.c mpu9250.h base64.o
 attys_fw.s: attys_fw.c mpu9250.h
 	msp430-gcc -S -mmcu=msp430g2553 $(CFLAGS) attys_fw.c
 
+attys_fw.hex: attys_fw.elf
+	objcopy -O ihex attys_fw.elf attys_fw.hex
+
 obj-dump:
 	objdump -s attys_fw.elf > attys_fw.dump
 
