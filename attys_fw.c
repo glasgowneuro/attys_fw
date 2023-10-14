@@ -990,7 +990,7 @@ void USCI0RX_ISR(void)
 // transmit a character to the bluetooth module
 void uart_tx(unsigned char c)
 {
-	unsigned int timeout = 30000;
+	unsigned long int timeout = 300000;
         // is RTS high? Then let's wait till it goes low.
         while ( (P2IN & 0x02 ) && (timeout>0) ) {timeout--;};
         // Timeout? Let's discard the data
@@ -1052,52 +1052,30 @@ void sendOK()
 }
 
 
-void setUART230k() {
-	// set baud rate to 230,000K
-	UCA0BR0 = 69;
-	UCA0BR1 = 0;
-	// UCBRSx = 5, UCBRFx = 0 for fraction
-	UCA0MCTL = UCBRS2 + UCBRS0;
-	// **Initialize USCI state machine**
-	UCA0CTL1 &= ~UCSWRST;
-	uart_rx_char = UCA0RXBUF;
+#define RN42DELAY 0x8000
+void longDelay() {
+	int i;
+	for(i=0;i<10;i++)
+		delay(RN42DELAY);
 }
 
-
-#define RN42WAIT 0x8000
 void initRN42() {
 	ignore_rx = 1;
-	// changing the baudrate
-	delay(RN42WAIT);
-	uart_tx('$');
-	uart_tx('$');
-	uart_tx('$');
-	delay(RN42WAIT);
-	sendText("SU,23");
-	uart_tx(10);
-	delay(RN42WAIT);
-	sendText("R,1");
-	uart_tx(10);
-	delay(RN42WAIT);
 
-	setUART230k();
-	// get rid of any rubbish character
-	uart_tx(10);
-	uart_tx(10);
-	uart_tx(10);
-
-	// now at the higher one
-	delay(RN42WAIT);
+	longDelay();
 	uart_tx('$');
 	uart_tx('$');
 	uart_tx('$');
-	delay(RN42WAIT);
+	longDelay();
 	sendText("S-,GN-ATTYS2");
 	uart_tx(10);
-	delay(RN42WAIT);
+	longDelay();
+	sendText("SG,2");
+	uart_tx(10);
+	longDelay();
 	sendText("R,1");
 	uart_tx(10);
-	delay(RN42WAIT);
+	longDelay();
 
 	ignore_rx = 0;
 	
