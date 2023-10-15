@@ -17,7 +17,7 @@
    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 **/
 
-#define FW_VERSION "2.0"
+#define FW_VERSION "3.0"
 
 // for debugging
 // #define FAKE_ADC_DATA
@@ -990,7 +990,7 @@ void USCI0RX_ISR(void)
 // transmit a character to the bluetooth module
 void uart_tx(unsigned char c)
 {
-	unsigned long int timeout = 300000;
+	unsigned int timeout = 30000;
         // is RTS high? Then let's wait till it goes low.
         while ( (P2IN & 0x02 ) && (timeout>0) ) {timeout--;};
         // Timeout? Let's discard the data
@@ -1071,6 +1071,9 @@ void initRN42() {
 	uart_tx(10);
 	longDelay();
 	sendText("SG,2");
+	uart_tx(10);
+	longDelay();
+	sendText("SA,1");
 	uart_tx(10);
 	longDelay();
 	sendText("R,1");
@@ -1304,8 +1307,6 @@ void main(void)
 	initRN42();
 
 	flashPowerLED();
-
-	send_data = 1;
 
 	for(;;) {
 		if (hasData) {
