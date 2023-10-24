@@ -1,6 +1,6 @@
 /**
    Attys firmware
-   Copyright (C) 2016-2020, Bernd Porr, mail@berndporr.me.uk
+   Copyright (C) 2016-2023, Bernd Porr, mail@berndporr.me.uk
    
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -1052,6 +1052,18 @@ void sendOK()
 }
 
 
+void setUART230k() {
+        // set baud rate to 230,400K
+        UCA0BR0 = 4;
+        UCA0BR1 = 0;
+        // UCBRSx = 5, UCBRFx = 3 for fraction, oversampling
+        UCA0MCTL = UCBRS2 + UCBRS0 + UCBRF0 + UCBRF1 + UCOS16;
+        // **Initialize USCI state machine**
+        UCA0CTL1 &= ~UCSWRST;
+        uart_rx_char = UCA0RXBUF;
+}
+
+
 #define RN42DELAY 0x8000
 void longDelay() {
 	int i;
@@ -1061,6 +1073,24 @@ void longDelay() {
 
 void initRN42() {
 	ignore_rx = 1;
+
+        longDelay();
+        uart_tx('$');
+        uart_tx('$');
+        uart_tx('$');
+        longDelay();
+        sendText("SU,02");
+        uart_tx(10);
+        longDelay();
+        sendText("R,1");
+        uart_tx(10);
+        longDelay();
+
+        setUART230k();
+        // get rid of any rubbish character
+        uart_tx(10);
+        uart_tx(10);
+        uart_tx(10);
 
 	longDelay();
 	uart_tx('$');
